@@ -1,0 +1,6 @@
+{
+  "name": "Karyasheel",
+  "description": "Indian Worker-Customer Marketplace Platform connecting skilled local workers with customers via Digital Worker ID Cards and 8-digit unique IDs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

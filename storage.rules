@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true || request.auth.token.email == 'admin@karyasheel.in');
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/jpeg')
+        || request.resource.contentType.matches('image/png')
+        || request.resource.contentType.matches('image/webp');
+    }
+
+    // Worker profile image (Target 50-80 KB, max 1 MB hard boundary)
+    match /workers/{uid}/profile/{fileName} {
+      allow read: if true;
+      allow write: if (isOwner(uid) || isAdmin())
+        && isValidImage()
+        && request.resource.size < 1 * 1024 * 1024;
+    }
+
+    // Worker portfolio images (Max 10 images, max 2 MB each)
+    match /workers/{uid}/portfolio/{fileName} {
+      allow read: if true;
+      allow write: if (isOwner(uid) || isAdmin())
+        && isValidImage()
+        && request.resource.size < 2 * 1024 * 1024;
+    }
+
+    // Private verification documents (Customers can NEVER access, admin only)
+    match /privateVerification/{uid}/{fileName} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if (isOwner(uid) || isAdmin())
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+  }
+}

@@ -1,0 +1,104 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (request.auth.token.admin == true || request.auth.token.email == 'admin@karyasheel.in');
+    }
+
+    // 1. Users collection
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid) 
+        && request.resource.data.uid == uid
+        && request.resource.data.role in ['worker', 'customer', 'admin']
+        && request.resource.data.accountStatus in ['active', 'pending'];
+      allow update: if (isOwner(uid) 
+        // User cannot elevate their own role or unblock their status
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.accountStatus == resource.data.accountStatus)
+        || isAdmin();
+      allow delete: if isAdmin();
+
+      // FCM Device tokens subcollection
+      match /devices/{deviceId} {
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+    }
+
+    // 2. Workers collection (Public profiles readable, mutations owner/admin only)
+    match /workers/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.workerId.size() == 8
+        && request.resource.data.verificationStatus in ['registered', 'pending']
+        && request.resource.data.ratingAverage == 0.0
+        && request.resource.data.completedJobsCount == 0;
+      allow update: if (isOwner(uid)
+        // Immutable security fields for worker
+        && request.resource.data.workerId == resource.data.workerId
+        && request.resource.data.verificationStatus == resource.data.verificationStatus
+        && request.resource.data.ratingAverage == resource.data.ratingAverage
+        && request.resource.data.ratingCount == resource.data.ratingCount
+        && request.resource.data.completedJobsCount == resource.data.completedJobsCount
+        && request.resource.data.createdAt == resource.data.createdAt)
+        || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 3. Worker Search Lightweight index
+    match /workerSearch/{workerId} {
+      allow read: if true;
+      allow create, update: if isSignedIn() || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 4. Customers collection
+    match /customers/{uid} {
+      allow read, create: if isOwner(uid) || isAdmin();
+      allow update: if isOwner(uid) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // 5. Categories collection (Public read, admin write)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 6. Reports collection (Any signed-in user can report, only admin can view/update)
+    match /reports/{reportId} {
+      allow create: if isSignedIn() && request.resource.data.reporterId == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // 7. Notifications collection (User can read/update their own notifications)
+    match /notifications/{notificationId} {
+      allow read, update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create, delete: if isAdmin();
+    }
+
+    // 8. Reserved Worker IDs registry (Transaction-safe counter/reservation)
+    match /reservedWorkerIds/{workerId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.workerId == workerId;
+      allow update, delete: if isAdmin();
+    }
+
+    // 9. App configuration
+    match /appConfig/{documentId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
