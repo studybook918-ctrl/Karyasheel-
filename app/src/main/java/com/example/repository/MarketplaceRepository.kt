@@ -347,4 +347,71 @@ class MarketplaceRepository(private val context: Context) {
             false
         }
     }
+
+    // ==========================================
+    // 6. WORK REQUEST REPOSITORY (PRD Sections 21, 22)
+    // ==========================================
+    private val _workRequests = MutableStateFlow<List<WorkRequestEntity>>(emptyList())
+    val workRequests: StateFlow<List<WorkRequestEntity>> = _workRequests.asStateFlow()
+
+    suspend fun createWorkRequest(request: WorkRequestEntity): Boolean = withContext(Dispatchers.IO) {
+        _workRequests.value = _workRequests.value + request
+        try {
+            firestore?.collection("workRequests")?.document(request.requestId)?.set(request, SetOptions.merge())?.await()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "createWorkRequest notice: ${e.message}")
+            true
+        }
+    }
+
+    suspend fun updateWorkRequestStatus(requestId: String, newStatus: String): Boolean = withContext(Dispatchers.IO) {
+        val list = _workRequests.value.toMutableList()
+        val idx = list.indexOfFirst { it.requestId == requestId }
+        if (idx != -1) {
+            list[idx] = list[idx].copy(status = newStatus)
+            _workRequests.value = list
+            try {
+                firestore?.collection("workRequests")?.document(requestId)?.update("status", newStatus)?.await()
+            } catch (e: Exception) {
+                Log.w(TAG, "updateWorkRequestStatus notice: ${e.message}")
+            }
+            return@withContext true
+        }
+        false
+    }
+
+    // ==========================================
+    // 7. CHAT REPOSITORY (PRD Section 22: Connection -> Private Chat)
+    // ==========================================
+    private val _chatMessages = MutableStateFlow<List<ChatMessageEntity>>(emptyList())
+    val chatMessages: StateFlow<List<ChatMessageEntity>> = _chatMessages.asStateFlow()
+
+    suspend fun sendChatMessage(msg: ChatMessageEntity): Boolean = withContext(Dispatchers.IO) {
+        _chatMessages.value = _chatMessages.value + msg
+        try {
+            firestore?.collection("connections")?.document(msg.connectionId)?.collection("messages")?.document(msg.messageId)?.set(msg)?.await()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "sendChatMessage notice: ${e.message}")
+            true
+        }
+    }
+
+    // ==========================================
+    // 8. CONTRACTOR TEAM REPOSITORY (PRD Section 11: मेरी टीम)
+    // ==========================================
+    private val _contractorTeam = MutableStateFlow<List<ContractorTeamMember>>(emptyList())
+    val contractorTeam: StateFlow<List<ContractorTeamMember>> = _contractorTeam.asStateFlow()
+
+    suspend fun addWorkerToTeam(member: ContractorTeamMember): Boolean = withContext(Dispatchers.IO) {
+        _contractorTeam.value = _contractorTeam.value + member
+        try {
+            firestore?.collection("contractorTeams")?.document(member.contractorUid)?.collection("members")?.document(member.memberId)?.set(member, SetOptions.merge())?.await()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "addWorkerToTeam notice: ${e.message}")
+            true
+        }
+    }
 }

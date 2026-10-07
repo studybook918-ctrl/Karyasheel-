@@ -20,6 +20,8 @@ sealed class Screen {
     object WorkerDashboard : Screen()
     object CustomerHome : Screen()
     data class WorkerDetail(val worker: WorkerEntity) : Screen()
+    data class Chat(val connectionId: String, val otherPartyName: String, val otherPartyId: String) : Screen()
+    object ContractorTeam : Screen()
     object AdminDashboard : Screen()
     object PublicQrView : Screen()
 }
@@ -44,15 +46,19 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private val _currentScreen = MutableStateFlow<Screen>(Screen.RoleSelect)
     val currentScreen = _currentScreen.asStateFlow()
 
-    // Worker Registration Form State (Step by Step - Master PRD Section 10)
+    // Worker Registration Form State (Step by Step - Master PRD Section 4 & 10)
     private val _registrationStep = MutableStateFlow(1)
     val registrationStep = _registrationStep.asStateFlow()
+
+    // Selected user type during registration (Skilled, General, Professional, Business, Contractor)
+    private val _regUserType = MutableStateFlow(MainCategoryType.SKILLED_WORKER)
+    val regUserType = _regUserType.asStateFlow()
 
     private val _regName = MutableStateFlow("")
     val regName = _regName.asStateFlow()
 
-    private val _regCategory = MutableStateFlow<CategoryEntity?>(null)
-    val regCategory = _regCategory.asStateFlow()
+    private val _regProfessionItem = MutableStateFlow<ProfessionItem?>(null)
+    val regProfessionItem = _regProfessionItem.asStateFlow()
 
     private val _regState = MutableStateFlow("उत्तर प्रदेश (Uttar Pradesh)")
     val regState = _regState.asStateFlow()
@@ -75,7 +81,15 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     // Worker Profile Entity
     val createdWorker: StateFlow<WorkerEntity?> = repository.currentWorkerEntity
 
-    // Customer Search & Filter States (Worker ID Search + Category + City)
+    // Customer Search & Filter States
+    // 1. Selected Main Category in Customer Flow (Skilled, General, Professional, Business, Contractor)
+    private val _selectedMainCategory = MutableStateFlow<MainCategoryType?>(null)
+    val selectedMainCategory = _selectedMainCategory.asStateFlow()
+
+    // 2. Selected Sub-profession filter
+    private val _selectedProfessionFilter = MutableStateFlow<String?>(null)
+    val selectedProfessionFilter = _selectedProfessionFilter.asStateFlow()
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 
@@ -84,9 +98,6 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
 
     private val _searchedWorkerResult = MutableStateFlow<WorkerEntity?>(null)
     val searchedWorkerResult = _searchedWorkerResult.asStateFlow()
-
-    private val _selectedCategoryFilter = MutableStateFlow<String?>(null)
-    val selectedCategoryFilter = _selectedCategoryFilter.asStateFlow()
 
     private val _selectedCityFilter = MutableStateFlow("प्रयागराज (Prayagraj)")
     val selectedCityFilter = _selectedCityFilter.asStateFlow()
@@ -98,26 +109,49 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private val _adminTab = MutableStateFlow(0) // 0: Workers, 1: Reports, 2: Categories
     val adminTab = _adminTab.asStateFlow()
 
-    // Filtered Workers for Customers (Efficient, only active workers displayed)
+    // Filtered Workers for Customers (All-India capable, matching main category, subcategory, city, query)
     val filteredWorkers: StateFlow<List<WorkerEntity>> = combine(
         repository.workers,
         _searchQuery,
-        _selectedCategoryFilter,
-        _selectedCityFilter,
-        _availableOnlyFilter
-    ) { workers, query, catFilter, cityFilter, availOnly ->
+        _selectedMainCategory,
+        combine(
+            _selectedProfessionFilter,
+            _selectedCityFilter,
+            _availableOnlyFilter
+        ) { prof, city, avail -> Triple(prof, city, avail) }
+    ) { workers, query, mainCat, (profFilter, cityFilter, availOnly) ->
         workers.filter { worker ->
-            val matchesCategory = catFilter == null || worker.categoryId == catFilter
-            val matchesCity = cityFilter.isBlank() || worker.city.contains(cityFilter, ignoreCase = true)
+            val matchesMainCat = mainCat == null || when (mainCat) {
+                MainCategoryType.SKILLED_WORKER -> worker.categoryId.contains("skilled") || worker.categoryId.contains("cat_")
+                MainCategoryType.GENERAL_WORKER -> worker.categoryId.contains("general")
+                MainCategoryType.PROFESSIONAL -> worker.categoryId.contains("professional")
+                MainCategoryType.BUSINESS -> worker.categoryId.contains("business")
+                MainCategoryType.CONTRACTOR -> worker.categoryId.contains("contractor")
+            }
+
+            val matchesProf = profFilter == null ||
+                    worker.professionHindi.contains(profFilter, ignoreCase = true) ||
+                    worker.professionEnglish.contains(profFilter, ignoreCase = true) ||
+                    worker.skills.any { it.contains(profFilter, ignoreCase = true) }
+
+            // All-India filter: if city is blank or "पूरे भारत में खोजें", matches all
+            val matchesCity = cityFilter.isBlank() ||
+                    cityFilter == "पूरे भारत में (All India)" ||
+                    worker.city.contains(cityFilter, ignoreCase = true) ||
+                    worker.state.contains(cityFilter, ignoreCase = true)
+
             val matchesAvail = !availOnly || worker.availability == "available"
+
             val matchesQuery = query.isBlank() ||
                     worker.name.contains(query, ignoreCase = true) ||
                     worker.professionHindi.contains(query, ignoreCase = true) ||
                     worker.professionEnglish.contains(query, ignoreCase = true) ||
                     worker.workerId.contains(query) ||
-                    worker.services.any { it.contains(query, ignoreCase = true) }
+                    worker.services.any { it.contains(query, ignoreCase = true) } ||
+                    worker.area.contains(query, ignoreCase = true) ||
+                    worker.city.contains(query, ignoreCase = true)
 
-            matchesCategory && matchesCity && matchesAvail && matchesQuery
+            matchesMainCat && matchesProf && matchesCity && matchesAvail && matchesQuery
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -159,8 +193,12 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun setRegistrationStep(step: Int) { _registrationStep.value = step }
+    fun setRegUserType(type: MainCategoryType) {
+        _regUserType.value = type
+        _regProfessionItem.value = null
+    }
     fun updateRegName(name: String) { _regName.value = name }
-    fun updateRegCategory(cat: CategoryEntity) { _regCategory.value = cat }
+    fun updateRegProfessionItem(item: ProfessionItem) { _regProfessionItem.value = item }
     fun updateRegState(state: String) { _regState.value = state }
     fun updateRegCity(city: String) { _regCity.value = city }
     fun updateRegArea(area: String) { _regArea.value = area }
@@ -172,25 +210,29 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             _isRegistering.value = true
             val generated8DigitId = repository.generateAndReserveUniqueWorkerId()
-            val cat = _regCategory.value ?: repository.categories.value.firstOrNull() ?: CategoryEntity("cat_electrician", "बिजली का काम", "Electrician", "⚡")
+            val profItem = _regProfessionItem.value
+            val profNameHindi = profItem?.nameHindi ?: "कुशल कारीगर"
+            val profNameEng = profItem?.nameEnglish ?: "Skilled Worker"
+            val catType = _regUserType.value
             val uid = _currentUser.value?.uid ?: "worker_${System.currentTimeMillis()}"
 
             val worker = WorkerEntity(
                 uid = uid,
                 workerId = generated8DigitId,
-                name = _regName.value.ifBlank { "कुशल कारीगर" },
-                categoryId = cat.categoryId,
-                categoryNameHindi = cat.nameHindi,
-                categoryNameEnglish = cat.nameEnglish,
-                professionHindi = cat.nameHindi,
-                professionEnglish = cat.nameEnglish,
+                name = _regName.value.ifBlank { "कार्यशील कामगार" },
+                categoryId = catType.id,
+                categoryNameHindi = catType.titleHindi,
+                categoryNameEnglish = catType.titleEnglish,
+                professionHindi = profNameHindi,
+                professionEnglish = profNameEng,
                 experienceYears = _regExperience.value,
                 state = _regState.value,
                 district = _regCity.value,
                 city = _regCity.value,
                 area = _regArea.value.ifBlank { "स्थानीय क्षेत्र" },
                 services = listOf("बुनियादी सेवा", "आपातकालीन कार्य", "नियमित मरम्मत"),
-                about = "${_regExperience.value} वर्षों के अनुभव के साथ ${cat.nameHindi} में समर्पित सेवा।",
+                skills = listOf(profNameHindi, "समयबद्ध कार्य"),
+                about = "${_regExperience.value} वर्षों के अनुभव के साथ $profNameHindi में समर्पित सेवा।",
                 availability = "available",
                 verificationStatus = "registered",
                 phoneNumber = _regPhone.value.ifBlank { "+91 98000 12345" },
@@ -213,12 +255,21 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    // Customer filters
+    fun setSelectedMainCategory(mainCategoryType: MainCategoryType?) {
+        _selectedMainCategory.value = mainCategoryType
+        _selectedProfessionFilter.value = null
+    }
+
+    fun setSelectedProfessionFilter(prof: String?) {
+        _selectedProfessionFilter.value = prof
+    }
+
     fun setSearchQuery(query: String) { _searchQuery.value = query }
-    fun setCategoryFilter(categoryId: String?) { _selectedCategoryFilter.value = categoryId }
     fun setCityFilter(city: String) { _selectedCityFilter.value = city }
     fun toggleAvailableOnly() { _availableOnlyFilter.value = !_availableOnlyFilter.value }
 
-    // Search by 8-Digit Worker ID (PRD Section 7)
+    // Search by 8-Digit Worker ID (PRD Section 7 & 11)
     fun searchByWorkerId(id: String) {
         _workerIdSearchQuery.value = id
         if (id.length == 8) {
@@ -228,6 +279,110 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             }
         } else {
             _searchedWorkerResult.value = null
+        }
+    }
+
+    // Work Requests (PRD Section 19 & 20)
+    val workRequests: StateFlow<List<WorkRequestEntity>> = repository.workRequests
+
+    fun sendWorkRequest(
+        worker: WorkerEntity,
+        workType: String,
+        workDesc: String,
+        location: String,
+        date: String,
+        budget: String,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            val user = _currentUser.value
+            val request = WorkRequestEntity(
+                requestId = "req_${System.currentTimeMillis()}",
+                customerUid = user?.uid ?: "cust_${System.currentTimeMillis()}",
+                customerName = user?.name ?: "ग्राहक",
+                customerPhone = "9876543210",
+                workerUid = worker.uid,
+                workerId = worker.workerId,
+                workerName = worker.name,
+                workType = workType.ifBlank { worker.professionHindi },
+                workDescription = workDesc,
+                location = location.ifBlank { "${worker.area}, ${worker.city}" },
+                date = date.ifBlank { "कल (शीघ्र)" },
+                budget = budget.ifBlank { "बातचीत के अनुसार" },
+                status = "PENDING",
+                createdAt = System.currentTimeMillis()
+            )
+            repository.createWorkRequest(request)
+
+            // Send notification to worker
+            val notif = NotificationEntity(
+                notificationId = "notif_${System.currentTimeMillis()}",
+                userId = worker.uid,
+                type = "new_job",
+                title = "🔔 नया काम उपलब्ध है",
+                body = "${request.workType} की जरूरत है - 📍 ${request.location}"
+            )
+            repository.sendNotification(notif)
+            onSuccess()
+        }
+    }
+
+    fun acceptWorkRequest(requestId: String, connectionId: String) {
+        viewModelScope.launch {
+            repository.updateWorkRequestStatus(requestId, "ACCEPTED")
+            // Automatically navigate to private chat
+            val req = workRequests.value.firstOrNull { it.requestId == requestId }
+            _currentScreen.value = Screen.Chat(
+                connectionId = connectionId,
+                otherPartyName = req?.customerName ?: "ग्राहक",
+                otherPartyId = req?.customerUid ?: ""
+            )
+        }
+    }
+
+    fun rejectWorkRequest(requestId: String) {
+        viewModelScope.launch {
+            repository.updateWorkRequestStatus(requestId, "REJECTED")
+        }
+    }
+
+    // Chat System (PRD Section 20)
+    val chatMessages: StateFlow<List<ChatMessageEntity>> = repository.chatMessages
+
+    fun sendChatMessage(connectionId: String, text: String) {
+        if (text.isBlank()) return
+        val user = _currentUser.value
+        val msg = ChatMessageEntity(
+            messageId = "msg_${System.currentTimeMillis()}",
+            connectionId = connectionId,
+            senderUid = user?.uid ?: "user_1",
+            senderName = user?.name ?: "उपयोगकर्ता",
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
+        viewModelScope.launch {
+            repository.sendChatMessage(msg)
+        }
+    }
+
+    // Contractor Team (PRD Section 10: मेरी टीम)
+    val contractorTeam: StateFlow<List<ContractorTeamMember>> = repository.contractorTeam
+
+    fun sendTeamJoinRequest(worker: WorkerEntity, onSuccess: () -> Unit) {
+        val contractorUid = _currentUser.value?.uid ?: "contractor_1"
+        val member = ContractorTeamMember(
+            memberId = "team_${System.currentTimeMillis()}",
+            contractorUid = contractorUid,
+            workerUid = worker.uid,
+            workerId = worker.workerId,
+            workerName = worker.name,
+            professionHindi = worker.professionHindi,
+            city = worker.city,
+            status = "PENDING"
+        )
+        viewModelScope.launch {
+            repository.addWorkerToTeam(member)
+            onSuccess()
         }
     }
 

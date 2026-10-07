@@ -1,7 +1,7 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -25,25 +25,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.InitialData
-import com.example.model.CategoryEntity
+import com.example.model.MainCategoryType
+import com.example.model.ProfessionItem
 import com.example.ui.theme.*
 import com.example.viewmodel.MarketplaceViewModel
 import com.example.viewmodel.Screen
 
 /**
- * Worker Registration - Master PRD Section 9, 10 & Firebase Production Architecture Section 6
- * Step 1: आपका नाम क्या है?
- * Step 2: आप क्या काम करते हैं? (CategoryEntity)
- * Step 3: आप कहाँ काम करते हैं? (State, City, Area)
- * Step 4: आपको यह काम कितने साल से आता है? (Experience Counter)
- * Step 5: अपना फोटो लगाएँ (50-80 KB WebP target pipeline ready)
- * Step 6: 🎉 आपका प्रोफाइल तैयार है!
+ * WORKER ONBOARDING (PRD Section 4, 5, 6, 7, 8, 9, 10, 11)
+ * Step 1: उपयोगकर्ता का प्रकार चुनें (5 Main Categories: Skilled, General, Professional, Business, Contractor)
+ * Step 2: आपका शुभ नाम क्या है?
+ * Step 3: आप क्या काम करते हैं? (Select Sub-profession from Category with compact visual icons)
+ * Step 4: आप कहाँ काम करते हैं? (Searchable Indian Location)
+ * Step 5: अनुभव व संपर्क (Experience Counter + Phone)
+ * Step 6: 🎉 आपका प्रोफाइल व 8-Digit ID कार्ड तैयार है!
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,15 +54,17 @@ fun WorkerRegistrationScreen(
     modifier: Modifier = Modifier
 ) {
     val currentStep by viewModel.registrationStep.collectAsState()
+    val regUserType by viewModel.regUserType.collectAsState()
     val name by viewModel.regName.collectAsState()
-    val selectedCategory by viewModel.regCategory.collectAsState()
+    val selectedProfItem by viewModel.regProfessionItem.collectAsState()
     val state by viewModel.regState.collectAsState()
     val city by viewModel.regCity.collectAsState()
     val area by viewModel.regArea.collectAsState()
     val experience by viewModel.regExperience.collectAsState()
     val phone by viewModel.regPhone.collectAsState()
     val isRegistering by viewModel.isRegistering.collectAsState()
-    val categories by viewModel.repository.categories.collectAsState()
+
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -129,6 +133,15 @@ fun WorkerRegistrationScreen(
 
                     Button(
                         onClick = {
+                            if (currentStep == 1 && name.isBlank()) {
+                                Toast.makeText(context, "कृपया अपना नाम दर्ज करें", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+                            if (currentStep == 3 && selectedProfItem == null) {
+                                Toast.makeText(context, "कृपया अपना कार्य/पेशा चुनें", Toast.LENGTH_SHORT).show()
+                                return@Button
+                            }
+
                             if (currentStep < 5) {
                                 viewModel.setRegistrationStep(currentStep + 1)
                             } else {
@@ -180,16 +193,27 @@ fun WorkerRegistrationScreen(
                 trackColor = Color(0xFFFFEDD5)
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
             when (currentStep) {
+                // Step 1: Name
                 1 -> Step1Name(name = name, onNameChange = { viewModel.updateRegName(it) })
-                2 -> Step2Category(
-                    categories = categories,
-                    selectedCategory = selectedCategory,
-                    onSelect = { viewModel.updateRegCategory(it) }
+
+                // Step 2: 5 Main Categories
+                2 -> Step2MainCategory(
+                    selectedType = regUserType,
+                    onSelect = { viewModel.setRegUserType(it) }
                 )
-                3 -> Step3Location(
+
+                // Step 3: Sub-profession
+                3 -> Step3SubProfession(
+                    mainCategoryType = regUserType,
+                    selectedItem = selectedProfItem,
+                    onSelect = { viewModel.updateRegProfessionItem(it) }
+                )
+
+                // Step 4: Location
+                4 -> Step4Location(
                     selectedState = state,
                     selectedCity = city,
                     area = area,
@@ -197,13 +221,16 @@ fun WorkerRegistrationScreen(
                     onCityChange = { viewModel.updateRegCity(it) },
                     onAreaChange = { viewModel.updateRegArea(it) }
                 )
-                4 -> Step4Experience(
+
+                // Step 5: Experience & Phone
+                5 -> Step5ExperienceAndFinish(
                     experience = experience,
                     phone = phone,
+                    name = name,
+                    profItem = selectedProfItem,
                     onExpChange = { viewModel.updateRegExperience(it) },
                     onPhoneChange = { viewModel.updateRegPhone(it) }
                 )
-                5 -> Step5Photo(name = name, category = selectedCategory)
             }
         }
     }
@@ -270,7 +297,7 @@ fun Step1Name(name: String, onNameChange: (String) -> Unit) {
                 Text(text = "💡", fontSize = 24.sp)
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "टिप: अपना वही नाम लिखें जिससे आपके इलाके के ग्राहक आपको पहचानते हैं।",
+                    text = "टिप: अपना वही नाम लिखें जिससे आपके इलाके के ग्राहक या ठेकेदार आपको पहचानते हैं।",
                     fontSize = 12.sp,
                     color = TextDark
                 )
@@ -280,11 +307,89 @@ fun Step1Name(name: String, onNameChange: (String) -> Unit) {
 }
 
 @Composable
-fun Step2Category(
-    categories: List<CategoryEntity>,
-    selectedCategory: CategoryEntity?,
-    onSelect: (CategoryEntity) -> Unit
+fun Step2MainCategory(
+    selectedType: MainCategoryType,
+    onSelect: (MainCategoryType) -> Unit
 ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        Text(
+            text = "आपकी कार्य श्रेणी क्या है?",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextDark
+        )
+        Text(
+            text = "अपनी उपयुक्त श्रेणी चुनें:",
+            fontSize = 13.sp,
+            color = TextMuted,
+            modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
+        )
+
+        MainCategoryType.values().forEach { catType ->
+            val isSelected = selectedType == catType
+            Card(
+                onClick = { onSelect(catType) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isSelected) Color(0xFFFFEDD5) else Color.White
+                ),
+                border = if (isSelected) CardDefaults.outlinedCardBorder().copy(width = 2.dp) else CardDefaults.outlinedCardBorder()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0xFFFEF3C7)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(text = catType.iconEmoji, fontSize = 22.sp)
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = catType.titleHindi,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isSelected) SaffronDark else TextDark
+                        )
+                        Text(
+                            text = catType.descriptionHindi,
+                            fontSize = 11.sp,
+                            color = TextMuted,
+                            maxLines = 1
+                        )
+                    }
+
+                    RadioButton(selected = isSelected, onClick = { onSelect(catType) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun Step3SubProfession(
+    mainCategoryType: MainCategoryType,
+    selectedItem: ProfessionItem?,
+    onSelect: (ProfessionItem) -> Unit
+) {
+    val items = InitialData.professionItems.filter { it.mainCategoryType == mainCategoryType }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "आप क्या काम करते हैं?",
@@ -293,10 +398,10 @@ fun Step2Category(
             color = TextDark
         )
         Text(
-            text = "नीचे दिए गए विकल्पों में से अपना मुख्य काम चुनें (कम पढ़ना, ज्यादा देखना):",
+            text = "${mainCategoryType.titleHindi} के अंतर्गत अपना मुख्य काम चुनें:",
             fontSize = 13.sp,
             color = TextMuted,
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+            modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
         )
 
         LazyVerticalGrid(
@@ -305,14 +410,12 @@ fun Step2Category(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxSize()
         ) {
-            items(categories) { cat ->
-                val isSelected = selectedCategory?.categoryId == cat.categoryId
+            items(items) { prof ->
+                val isSelected = selectedItem?.id == prof.id
                 Card(
-                    onClick = { onSelect(cat) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_card_${cat.categoryId}"),
-                    shape = RoundedCornerShape(16.dp),
+                    onClick = { onSelect(prof) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = if (isSelected) Color(0xFFFFEDD5) else Color.White
                     ),
@@ -321,23 +424,23 @@ fun Step2Category(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(14.dp),
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(text = cat.iconEmoji, fontSize = 36.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = prof.iconEmoji, fontSize = 26.sp)
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = cat.nameHindi,
-                            fontSize = 13.sp,
+                            text = prof.nameHindi,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             color = if (isSelected) SaffronDark else TextDark,
-                            lineHeight = 16.sp
+                            lineHeight = 15.sp
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = cat.nameEnglish,
-                            fontSize = 11.sp,
+                            text = prof.nameEnglish,
+                            fontSize = 10.sp,
                             color = TextMuted,
                             textAlign = TextAlign.Center
                         )
@@ -349,7 +452,7 @@ fun Step2Category(
 }
 
 @Composable
-fun Step3Location(
+fun Step4Location(
     selectedState: String,
     selectedCity: String,
     area: String,
@@ -360,57 +463,42 @@ fun Step3Location(
     var stateMenuExpanded by remember { mutableStateOf(false) }
     var cityMenuExpanded by remember { mutableStateOf(false) }
 
-    val states = InitialData.indianStatesWithCities.keys.toList()
-    val cities = InitialData.indianStatesWithCities[selectedState] ?: listOf("प्रयागराज (Prayagraj)")
+    val availableCities = InitialData.indianStatesWithCities[selectedState] ?: listOf("प्रयागराज (Prayagraj)")
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .verticalScroll(rememberScrollState())
     ) {
-        Box(
-            modifier = Modifier
-                .size(76.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFEFF6FF)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "📍", fontSize = 38.sp)
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
         Text(
             text = "आप कहाँ काम करते हैं?",
-            fontSize = 22.sp,
+            fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
             color = TextDark
         )
         Text(
-            text = "ग्राहक आपको आपके शहर और इलाके के अनुसार खोजेंगे (सटीक घर का पता गोपनीय रहेगा)",
+            text = "ग्राहक आपको इसी स्थान के आधार पर खोजेंगे:",
             fontSize = 13.sp,
             color = TextMuted,
-            modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
+            modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)
         )
 
         // State Dropdown
+        Text("राज्य (State):", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextDark)
+        Spacer(modifier = Modifier.height(6.dp))
         Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = selectedState,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("राज्य (State)") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { stateMenuExpanded = true }
-                    .testTag("reg_state_field"),
-                shape = RoundedCornerShape(14.dp)
-            )
-            DropdownMenu(
-                expanded = stateMenuExpanded,
-                onDismissRequest = { stateMenuExpanded = false }
+            OutlinedButton(
+                onClick = { stateMenuExpanded = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                states.forEach { s ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(text = selectedState, color = TextDark)
+                    Text("▼", color = SaffronPrimary)
+                }
+            }
+            DropdownMenu(expanded = stateMenuExpanded, onDismissRequest = { stateMenuExpanded = false }) {
+                InitialData.indianStatesWithCities.keys.forEach { s ->
                     DropdownMenuItem(
                         text = { Text(s) },
                         onClick = {
@@ -427,23 +515,21 @@ fun Step3Location(
         Spacer(modifier = Modifier.height(14.dp))
 
         // City Dropdown
+        Text("जिला / शहर (City / District):", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextDark)
+        Spacer(modifier = Modifier.height(6.dp))
         Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = selectedCity,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("शहर / जिला (City / District)") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { cityMenuExpanded = true }
-                    .testTag("reg_city_field"),
-                shape = RoundedCornerShape(14.dp)
-            )
-            DropdownMenu(
-                expanded = cityMenuExpanded,
-                onDismissRequest = { cityMenuExpanded = false }
+            OutlinedButton(
+                onClick = { cityMenuExpanded = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                cities.forEach { c ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(text = selectedCity, color = TextDark)
+                    Text("▼", color = SaffronPrimary)
+                }
+            }
+            DropdownMenu(expanded = cityMenuExpanded, onDismissRequest = { cityMenuExpanded = false }) {
+                availableCities.forEach { c ->
                     DropdownMenuItem(
                         text = { Text(c) },
                         onClick = {
@@ -458,25 +544,25 @@ fun Step3Location(
         Spacer(modifier = Modifier.height(14.dp))
 
         // Area / Mohalla
+        Text("इलाका / मोहल्ला (Area / Colony):", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = TextDark)
+        Spacer(modifier = Modifier.height(6.dp))
         OutlinedTextField(
             value = area,
             onValueChange = onAreaChange,
-            placeholder = { Text("उदा. सिविल लाइंस, कटरा, चौक आदि") },
-            label = { Text("इलाका / मोहल्ला (Area)") },
-            leadingIcon = { Icon(Icons.Default.LocationOn, contentDescription = null, tint = SaffronPrimary) },
+            placeholder = { Text("उदा. सिविल लाइंस / कटरा / हाटा बाजार") },
             singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("reg_area_input"),
-            shape = RoundedCornerShape(14.dp)
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
         )
     }
 }
 
 @Composable
-fun Step4Experience(
+fun Step5ExperienceAndFinish(
     experience: Int,
     phone: String,
+    name: String,
+    profItem: ProfessionItem?,
     onExpChange: (Int) -> Unit,
     onPhoneChange: (String) -> Unit
 ) {
@@ -488,171 +574,85 @@ fun Step4Experience(
     ) {
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(70.dp)
                 .clip(CircleShape)
                 .background(Color(0xFFFEF3C7)),
             contentAlignment = Alignment.Center
         ) {
-            Text(text = "🛠️", fontSize = 38.sp)
+            Text(text = "⭐", fontSize = 34.sp)
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "आपको यह काम कितने साल से आता है?",
+            text = "काम का अनुभव व फोन नंबर",
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold,
-            color = TextDark,
-            textAlign = TextAlign.Center
+            color = TextDark
         )
-        Text(
-            text = "अनुभव से ग्राहकों का भरोसा बढ़ता है",
-            fontSize = 13.sp,
-            color = TextMuted,
-            modifier = Modifier.padding(top = 4.dp, bottom = 20.dp)
-        )
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Surface(
-            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
             color = Color.White,
-            border = CardDefaults.outlinedCardBorder(),
-            modifier = Modifier.fillMaxWidth()
+            border = CardDefaults.outlinedCardBorder()
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledIconButton(
-                    onClick = { if (experience > 0) onExpChange(experience - 1) },
-                    modifier = Modifier.size(54.dp).testTag("exp_minus_btn"),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = SaffronContainer)
-                ) {
-                    Icon(Icons.Default.Remove, contentDescription = "घटाएँ", tint = OnSaffronContainer)
-                }
+            Column(modifier = Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = "आपको यह काम कितने साल से आता है?", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(12.dp))
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "$experience",
-                        fontSize = 42.sp,
-                        fontWeight = FontWeight.Black,
-                        color = SaffronDark
-                    )
-                    Text(
-                        text = "साल का अनुभव (Years)",
-                        fontSize = 14.sp,
-                        color = TextMuted,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { if (experience > 0) onExpChange(experience - 1) },
+                        modifier = Modifier.background(Color(0xFFFFEDD5), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Remove, contentDescription = "कम करें")
+                    }
 
-                FilledIconButton(
-                    onClick = { onExpChange(experience + 1) },
-                    modifier = Modifier.size(54.dp).testTag("exp_plus_btn"),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = SaffronPrimary)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "बढ़ाएँ", tint = Color.White)
+                    Text(
+                        text = "$experience वर्ष",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = SaffronDark,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+
+                    IconButton(
+                        onClick = { onExpChange(experience + 1) },
+                        modifier = Modifier.background(Color(0xFFFFEDD5), CircleShape)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "बढ़ाएं")
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         OutlinedTextField(
             value = phone,
             onValueChange = onPhoneChange,
-            placeholder = { Text("उदा. +91 98765 43210") },
-            label = { Text("संपर्क फोन नंबर (Mobile Number)") },
+            label = { Text("मोबाइल नंबर (फोन कॉल व WhatsApp)") },
+            placeholder = { Text("उदा. 9876543210") },
             singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("reg_phone_input"),
-            shape = RoundedCornerShape(14.dp)
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
         )
-    }
-}
-
-@Composable
-fun Step5Photo(
-    name: String,
-    category: CategoryEntity?
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(76.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFDCFCE7)),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = "📸", fontSize = 38.sp)
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-        Text(
-            text = "अपना फोटो चुनें",
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextDark
-        )
-        Text(
-            text = "साफ फोटो से ग्राहक तुरंत पहचान पाते हैं (ऑटोमैटिक 50-80 KB ऑप्टिमाइज़्ड)",
-            fontSize = 13.sp,
-            color = TextMuted,
-            modifier = Modifier.padding(top = 4.dp, bottom = 24.dp)
-        )
-
-        Box(
-            modifier = Modifier
-                .size(130.dp)
-                .clip(CircleShape)
-                .background(Color(0xFFFFEDD5))
-                .border(3.dp, SaffronPrimary, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(text = category?.iconEmoji ?: "👷", fontSize = 64.sp)
-        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        OutlinedButton(
-            onClick = {},
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.testTag("upload_photo_btn")
-        ) {
-            Icon(Icons.Default.CameraAlt, contentDescription = null, tint = SaffronPrimary)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("फोटो चुनें (ऑटो कम्प्रेशन)", color = SaffronPrimary, fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
         Surface(
-            color = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            border = CardDefaults.outlinedCardBorder(),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFFEFF6FF),
+            border = CardDefaults.outlinedCardBorder()
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    text = "🎉 सब तैयार है!",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = EmeraldSuccess
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "‘आगे बढ़ें’ दबाते ही आपका 8-अंकों का यूनिक Worker ID रिज़र्व होगा और डिजिटल ID कार्ड तैयार हो जाएगा जिसे आप सुरक्षित रूप से शेयर कर सकेंगे।",
-                    fontSize = 13.sp,
-                    color = TextDark,
-                    lineHeight = 18.sp
-                )
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(text = "✅ 8-अंकों का Digital Work ID मिलेगा", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = NavySecondary)
+                Text(text = "नाम: $name", fontSize = 12.sp, color = TextDark)
+                Text(text = "काम: ${profItem?.nameHindi ?: "कारीगर"}", fontSize = 12.sp, color = TextDark)
+                Text(text = "सत्यापन: 🟡 Platform Registered (मुफ्त)", fontSize = 11.sp, color = TextMuted)
             }
         }
     }

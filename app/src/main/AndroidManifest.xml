@@ -28,6 +28,11 @@
             </intent-filter>
         </activity>
 
+        <!-- Disable automatic background FCM registration on boot/launch; initialization is safely managed via FcmTokenManager -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+
         <!-- Firebase Cloud Messaging Service (PRD Section 3) -->
         <service
             android:name=".notification.WorkerMarketplaceMessagingService"

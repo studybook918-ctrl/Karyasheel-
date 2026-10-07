@@ -19,7 +19,9 @@ import kotlinx.coroutines.tasks.await
 /**
  * Production FCM Token Manager - Master PRD Section 4 & 5
  * Handles stable deviceId generation and atomic Firestore updates to users/{uid}/devices/{deviceId}.
- * Checks Google Play Services availability before requesting FCM token to prevent hard failure exceptions.
+ * Checks Google Play Services availability and graceful error handling.
+ * Keeps autoInitEnabled = false by default to prevent hard failure exceptions in browser/emulator
+ * environments without valid Google Play Services accounts.
  */
 object FcmTokenManager {
     private const val TAG = "FcmTokenManager"
@@ -57,7 +59,8 @@ object FcmTokenManager {
 
     /**
      * Fetch current FCM token and sync to users/{uid}/devices/{deviceId}.
-     * Only invokes FirebaseMessaging when Play Services are present and initialized.
+     * Only invoked when user is authenticated and Play Services are present.
+     * Keeps autoInitEnabled false so FCM's internal daemon doesn't automatically trigger failed retries.
      */
     fun syncCurrentToken(context: Context, targetUid: String? = null) {
         if (!isGooglePlayServicesAvailable(context)) {
@@ -72,20 +75,26 @@ object FcmTokenManager {
                     return@launch
                 }
 
-                FirebaseMessaging.getInstance().token
+                val messaging = FirebaseMessaging.getInstance()
+                // Do NOT force isAutoInitEnabled = true, which triggers internal daemon retries
+                messaging.token
                     .addOnCompleteListener { task ->
-                        if (task.isSuccessful && !task.result.isNullOrBlank()) {
-                            val token = task.result
-                            val uid = targetUid ?: FirebaseAuth.getInstance().currentUser?.uid
-                            if (!uid.isNullOrBlank()) {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    saveTokenToFirestore(context, uid, token)
+                        try {
+                            if (task.isSuccessful && !task.result.isNullOrBlank()) {
+                                val token = task.result
+                                val uid = targetUid ?: FirebaseAuth.getInstance().currentUser?.uid
+                                if (!uid.isNullOrBlank()) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        saveTokenToFirestore(context, uid, token)
+                                    }
+                                } else {
+                                    Log.d(TAG, "FCM token ready: $token (User not yet authenticated)")
                                 }
                             } else {
-                                Log.d(TAG, "FCM token ready: $token (User not yet authenticated)")
+                                Log.d(TAG, "FCM token retrieval notice (Play Services account/network): ${task.exception?.message}")
                             }
-                        } else {
-                            Log.d(TAG, "FCM registration info: ${task.exception?.message}")
+                        } catch (e: Exception) {
+                            Log.d(TAG, "FCM token task notice: ${e.message}")
                         }
                     }
             } catch (e: Exception) {

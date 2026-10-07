@@ -24,13 +24,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.notification.FcmTokenManager
 import com.example.notification.NotificationChannels
-import com.example.ui.screens.AdminDashboardScreen
-import com.example.ui.screens.CustomerHomeScreen
-import com.example.ui.screens.PublicQrProfileScreen
-import com.example.ui.screens.RoleSelectionScreen
-import com.example.ui.screens.WorkerDashboardScreen
-import com.example.ui.screens.WorkerDetailScreen
-import com.example.ui.screens.WorkerRegistrationScreen
+import com.example.ui.screens.*
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.MarketplaceViewModel
 import com.example.viewmodel.Screen
@@ -41,10 +35,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 1. Create Android Notification Channels (PRD Section 6)
+        // 1. Create Android Notification Channels (PRD Section 34)
         NotificationChannels.createChannels(this)
 
-        // 2. Sync FCM Device Token for current installation (PRD Section 4)
+        // 2. Sync FCM Device Token for current installation (PRD Section 34)
         FcmTokenManager.syncCurrentToken(this)
 
         setContent {
@@ -71,7 +65,7 @@ fun MarketplaceApp(
     val currentScreen by viewModel.currentScreen.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
 
-    // Android 13+ Runtime Notification Permission Request (PRD Section 2)
+    // Android 13+ Runtime Notification Permission Request
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -93,14 +87,14 @@ fun MarketplaceApp(
         }
     }
 
-    // Sync token whenever user logs in or profile changes (PRD Section 4 & 13)
+    // Sync token whenever user logs in or profile changes
     LaunchedEffect(currentUser?.uid) {
         currentUser?.uid?.let { uid ->
             FcmTokenManager.syncCurrentToken(context, uid)
         }
     }
 
-    // Handle Notification Tap navigation (PRD Section 8 & 9)
+    // Handle Notification Tap navigation
     LaunchedEffect(intent) {
         intent?.let {
             val targetId = it.getStringExtra("target_id")
@@ -110,7 +104,7 @@ fun MarketplaceApp(
                 viewModel.searchedWorkerResult.value?.let { matchedWorker ->
                     viewModel.navigateTo(Screen.WorkerDetail(matchedWorker))
                 }
-            } else if (type == "PROFILE_VERIFIED") {
+            } else if (type == "PROFILE_VERIFIED" || type == "new_job") {
                 viewModel.navigateTo(Screen.WorkerDashboard)
             }
         }
@@ -119,7 +113,7 @@ fun MarketplaceApp(
     // Handle Hardware/System Back Key cleanly
     when (val screen = currentScreen) {
         is Screen.RoleSelect -> {
-            // Default Root Screen - standard back behavior exits app
+            // Default Root Screen - standard back exits app
         }
         is Screen.WorkerRegistration -> {
             BackHandler {
@@ -138,12 +132,28 @@ fun MarketplaceApp(
         }
         is Screen.CustomerHome -> {
             BackHandler {
-                viewModel.navigateTo(Screen.RoleSelect)
+                if (viewModel.selectedProfessionFilter.value != null) {
+                    viewModel.setSelectedProfessionFilter(null)
+                } else if (viewModel.selectedMainCategory.value != null) {
+                    viewModel.setSelectedMainCategory(null)
+                } else {
+                    viewModel.navigateTo(Screen.RoleSelect)
+                }
             }
         }
         is Screen.WorkerDetail -> {
             BackHandler {
                 viewModel.navigateTo(Screen.CustomerHome)
+            }
+        }
+        is Screen.Chat -> {
+            BackHandler {
+                viewModel.navigateTo(Screen.CustomerHome)
+            }
+        }
+        is Screen.ContractorTeam -> {
+            BackHandler {
+                viewModel.navigateTo(Screen.WorkerDashboard)
             }
         }
         is Screen.AdminDashboard -> {
@@ -164,6 +174,12 @@ fun MarketplaceApp(
         is Screen.WorkerDashboard -> WorkerDashboardScreen(viewModel = viewModel)
         is Screen.CustomerHome -> CustomerHomeScreen(viewModel = viewModel)
         is Screen.WorkerDetail -> WorkerDetailScreen(worker = screen.worker, viewModel = viewModel)
+        is Screen.Chat -> ChatScreen(
+            connectionId = screen.connectionId,
+            otherPartyName = screen.otherPartyName,
+            viewModel = viewModel
+        )
+        is Screen.ContractorTeam -> ContractorTeamScreen(viewModel = viewModel)
         is Screen.AdminDashboard -> AdminDashboardScreen(viewModel = viewModel)
         is Screen.PublicQrView -> PublicQrProfileScreen(viewModel = viewModel)
     }
