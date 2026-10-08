@@ -19,9 +19,9 @@ import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 /**
- * REPOSITORY LAYER - Master PRD Section 33 & 34
+ * REPOSITORY LAYER - Master PRD & Real Firebase Integration
  * UI -> ViewModel -> Repository -> Firebase Services (Auth, Firestore, FCM)
- * Handles Firebase Auth state safely to ensure Firestore security rules compliance.
+ * Uses authoritative FirebaseAuth state and avoids unprovisioned anonymous sessions.
  */
 class MarketplaceRepository(private val context: Context) {
     private val TAG = "MarketplaceRepo"
@@ -52,9 +52,12 @@ class MarketplaceRepository(private val context: Context) {
             firestore = FirebaseFirestore.getInstance()
             Log.d(TAG, "Firebase initialized in Repository")
 
-            // Ensure anonymous/authenticated session if not already signed in
-            // to fulfill Firestore security rules request.auth != null
-            ensureFirebaseAuth()
+            // If user is already logged in on cold start, fetch their profile
+            auth?.currentUser?.let { fbUser ->
+                CoroutineScope(Dispatchers.IO).launch {
+                    fetchUserProfile(fbUser.uid)
+                }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Firebase init info: ${e.message}")
         }
@@ -66,47 +69,15 @@ class MarketplaceRepository(private val context: Context) {
         _workers.value = InitialData.sampleWorkers
     }
 
-    private fun ensureFirebaseAuth() {
-        val a = auth ?: return
-        if (a.currentUser == null) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    a.signInAnonymously().await()
-                    Log.d(TAG, "Anonymous Firebase Auth established: ${a.currentUser?.uid}")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Firebase Auth auto-session info: ${e.message}")
-                }
-            }
-        }
-    }
-
     fun getCurrentAuthUid(): String? = auth?.currentUser?.uid
 
-    suspend fun signInWithEmail(email: String, pass: String): String? = withContext(Dispatchers.IO) {
-        val a = auth ?: return@withContext null
-        return@withContext try {
-            val res = a.signInWithEmailAndPassword(email, pass).await()
-            res.user?.uid
-        } catch (e: Exception) {
-            try {
-                // If account doesn't exist, create it
-                val createRes = a.createUserWithEmailAndPassword(email, pass).await()
-                createRes.user?.uid
-            } catch (e2: Exception) {
-                Log.w(TAG, "Email auth fallback: ${e2.message}")
-                a.currentUser?.uid
-            }
-        }
-    }
-
     // ==========================================
-    // 1. TRANSACTION-SAFE 8-DIGIT WORKER ID GENERATOR (Section 6)
+    // 1. TRANSACTION-SAFE 8-DIGIT WORKER ID GENERATOR (PRD Section 11)
     // ==========================================
     suspend fun generateAndReserveUniqueWorkerId(): String = withContext(Dispatchers.IO) {
         val db = firestore
         val currentUid = auth?.currentUser?.uid
         if (db == null || currentUid == null) {
-            // Local fallback
             return@withContext InitialData.generateWorkerId()
         }
 
@@ -144,28 +115,62 @@ class MarketplaceRepository(private val context: Context) {
 
     // ==========================================
     // 2. USER REPOSITORY (users/{uid})
+    // Preserves existing createdAt and updates lastActiveAt/updatedAt
     // ==========================================
+    suspend fun fetchUserProfile(uid: String): UserEntity? = withContext(Dispatchers.IO) {
+        try {
+            val doc = firestore?.collection("users")?.document(uid)?.get()?.await()
+            if (doc != null && doc.exists()) {
+                val entity = doc.toObject(UserEntity::class.java)
+                _currentUserEntity.value = entity
+                return@withContext entity
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchUserProfile error: ${e.message}")
+        }
+        null
+    }
+
     suspend fun saveUser(user: UserEntity): Boolean = withContext(Dispatchers.IO) {
         _currentUserEntity.value = user
         try {
             val db = firestore
             val a = auth
             if (db != null) {
-                // Determine target UID aligned with active auth session if available
                 val activeUid = a?.currentUser?.uid ?: user.uid
-                val userToWrite = if (a?.currentUser != null) user.copy(uid = activeUid) else user
+                val userRef = db.collection("users").document(activeUid)
 
-                db.collection("users").document(userToWrite.uid).set(userToWrite, SetOptions.merge()).await()
-                Log.d(TAG, "User document saved successfully for UID: ${userToWrite.uid}")
+                // Check existing doc to preserve createdAt
+                val existingDoc = userRef.get().await()
+                val finalUser = if (existingDoc.exists()) {
+                    val existingCreatedAt = existingDoc.getLong("createdAt") ?: user.createdAt
+                    user.copy(
+                        uid = activeUid,
+                        createdAt = existingCreatedAt,
+                        updatedAt = System.currentTimeMillis(),
+                        lastActiveAt = System.currentTimeMillis()
+                    )
+                } else {
+                    user.copy(
+                        uid = activeUid,
+                        createdAt = System.currentTimeMillis(),
+                        updatedAt = System.currentTimeMillis(),
+                        lastActiveAt = System.currentTimeMillis()
+                    )
+                }
+
+                userRef.set(finalUser, SetOptions.merge()).await()
+                _currentUserEntity.value = finalUser
+                Log.d(TAG, "User profile saved to Firestore for UID: $activeUid")
             }
             true
         } catch (e: Exception) {
             Log.w(TAG, "saveUser notice: ${e.message}")
-            true // Local reactive state updated successfully
+            true
         }
     }
 
-    // Register FCM Device Token (users/{uid}/devices/{deviceId} - Section 12)
+    // Register FCM Device Token (users/{uid}/devices/{deviceId})
     suspend fun registerDeviceToken(uid: String, deviceId: String, token: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val activeUid = auth?.currentUser?.uid
@@ -202,10 +207,8 @@ class MarketplaceRepository(private val context: Context) {
             val workerToWrite = worker.copy(uid = currentUid)
 
             if (db != null) {
-                // 1. Save to workers/{uid}
                 db.collection("workers").document(workerToWrite.uid).set(workerToWrite, SetOptions.merge()).await()
 
-                // 2. Save lightweight record to workerSearch/{workerId} (Section 20)
                 val searchIndex = WorkerSearchIndexEntity(
                     workerId = workerToWrite.workerId,
                     uid = workerToWrite.uid,
@@ -238,7 +241,7 @@ class MarketplaceRepository(private val context: Context) {
         }
     }
 
-    // Worker ID Search (Section 7)
+    // Worker ID Search
     suspend fun searchWorkerByWorkerId(workerId: String): WorkerEntity? = withContext(Dispatchers.IO) {
         val trimmed = workerId.trim()
         val localMatch = _workers.value.firstOrNull { it.workerId == trimmed }
@@ -259,7 +262,7 @@ class MarketplaceRepository(private val context: Context) {
         null
     }
 
-    // Toggle Worker Availability (Section 4 & 19)
+    // Toggle Worker Availability
     suspend fun toggleAvailability(uid: String): Boolean = withContext(Dispatchers.IO) {
         val currentList = _workers.value.toMutableList()
         val idx = currentList.indexOfFirst { it.uid == uid }
@@ -284,7 +287,7 @@ class MarketplaceRepository(private val context: Context) {
         false
     }
 
-    // Admin Verification & Account Status Moderation (Section 15, 16, 22)
+    // Admin Verification & Account Status Moderation
     suspend fun adminUpdateWorkerStatus(
         uid: String,
         newVerification: String?,
@@ -349,7 +352,7 @@ class MarketplaceRepository(private val context: Context) {
     }
 
     // ==========================================
-    // 6. WORK REQUEST REPOSITORY (PRD Sections 21, 22)
+    // 6. WORK REQUEST REPOSITORY (workRequests/{requestId})
     // ==========================================
     private val _workRequests = MutableStateFlow<List<WorkRequestEntity>>(emptyList())
     val workRequests: StateFlow<List<WorkRequestEntity>> = _workRequests.asStateFlow()
@@ -382,7 +385,7 @@ class MarketplaceRepository(private val context: Context) {
     }
 
     // ==========================================
-    // 7. CHAT REPOSITORY (PRD Section 22: Connection -> Private Chat)
+    // 7. CHAT REPOSITORY (connections/{connectionId}/messages)
     // ==========================================
     private val _chatMessages = MutableStateFlow<List<ChatMessageEntity>>(emptyList())
     val chatMessages: StateFlow<List<ChatMessageEntity>> = _chatMessages.asStateFlow()
@@ -399,7 +402,7 @@ class MarketplaceRepository(private val context: Context) {
     }
 
     // ==========================================
-    // 8. CONTRACTOR TEAM REPOSITORY (PRD Section 11: मेरी टीम)
+    // 8. CONTRACTOR TEAM REPOSITORY (contractorTeams/{contractorUid}/members)
     // ==========================================
     private val _contractorTeam = MutableStateFlow<List<ContractorTeamMember>>(emptyList())
     val contractorTeam: StateFlow<List<ContractorTeamMember>> = _contractorTeam.asStateFlow()

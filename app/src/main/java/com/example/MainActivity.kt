@@ -38,9 +38,6 @@ class MainActivity : ComponentActivity() {
         // 1. Create Android Notification Channels (PRD Section 34)
         NotificationChannels.createChannels(this)
 
-        // 2. Sync FCM Device Token for current installation (PRD Section 34)
-        FcmTokenManager.syncCurrentToken(this)
-
         setContent {
             MyApplicationTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {

@@ -27,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import com.example.ui.components.AuthModalDialog
+import com.example.ui.components.AuthDialogMode
 import com.example.model.UserRole
 import com.example.ui.theme.*
 import com.example.viewmodel.MarketplaceViewModel
@@ -37,9 +40,9 @@ fun RoleSelectionScreen(
     viewModel: MarketplaceViewModel,
     modifier: Modifier = Modifier
 ) {
-    var showEmailLoginDialog by remember { mutableStateOf(false) }
-    var emailInput by remember { mutableStateOf("") }
-    var nameInput by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    var showAuthModal by remember { mutableStateOf(false) }
+    var authModalInitialMode by remember { mutableStateOf(AuthDialogMode.LOGIN) }
 
     val user by viewModel.currentUser.collectAsState()
 
@@ -247,7 +250,7 @@ fun RoleSelectionScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedButton(
-                        onClick = { viewModel.simulateGoogleLogin() },
+                        onClick = { viewModel.performGoogleLogin(context) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("google_login_btn"),
@@ -257,7 +260,10 @@ fun RoleSelectionScreen(
                     }
 
                     OutlinedButton(
-                        onClick = { showEmailLoginDialog = true },
+                        onClick = {
+                            authModalInitialMode = AuthDialogMode.LOGIN
+                            showAuthModal = true
+                        },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("email_login_btn"),
@@ -269,12 +275,33 @@ fun RoleSelectionScreen(
 
                 if (user != null) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "लॉगिन हुआ: ${user?.name} (${user?.email})",
-                        fontSize = 11.sp,
-                        color = EmeraldSuccess,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "लॉगिन हुआ: ${user?.name}",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldSuccess
+                            )
+                            if (!user?.email.isNullOrBlank()) {
+                                Text(
+                                    text = user?.email.orEmpty(),
+                                    fontSize = 11.sp,
+                                    color = TextMuted
+                                )
+                            }
+                        }
+                        TextButton(
+                            onClick = { viewModel.performSignOut() },
+                            modifier = Modifier.testTag("logout_btn")
+                        ) {
+                            Text("लॉगआउट", fontSize = 12.sp, color = RubyAlert, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
@@ -304,45 +331,11 @@ fun RoleSelectionScreen(
         Spacer(modifier = Modifier.height(24.dp))
     }
 
-    if (showEmailLoginDialog) {
-        AlertDialog(
-            onDismissRequest = { showEmailLoginDialog = false },
-            title = { Text("Email से लॉगिन करें") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = nameInput,
-                        onValueChange = { nameInput = it },
-                        label = { Text("आपका नाम") },
-                        modifier = Modifier.fillMaxWidth().testTag("email_name_input"),
-                        singleLine = true
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = emailInput,
-                        onValueChange = { emailInput = it },
-                        label = { Text("ईमेल पता") },
-                        modifier = Modifier.fillMaxWidth().testTag("email_address_input"),
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.simulateEmailLogin(emailInput, nameInput)
-                        showEmailLoginDialog = false
-                    },
-                    modifier = Modifier.testTag("confirm_email_login_btn")
-                ) {
-                    Text("लॉगिन करें")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showEmailLoginDialog = false }) {
-                    Text("रद्द करें")
-                }
-            }
+    if (showAuthModal) {
+        AuthModalDialog(
+            viewModel = viewModel,
+            initialMode = authModalInitialMode,
+            onDismiss = { showAuthModal = false }
         )
     }
 }
